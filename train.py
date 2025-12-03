@@ -8,6 +8,7 @@ from torch.utils.data import DataLoader
 from models import LSTMClassifier
 from dataloader import NpzDataset
 from losses import FocalLoss
+from collections import defaultdict
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -15,7 +16,7 @@ print("Using device:", device)
 
 datafile_path = "stock_sequences.npz"
 dataset = NpzDataset(datafile_path, seq_len=30)
-loader = DataLoader(dataset, batch_size=32, shuffle=True)
+loader = DataLoader(dataset, batch_size=16, shuffle=True)
 
 model = LSTMClassifier().to(device)
 alpha = torch.tensor([0.05, 0.45, 0.5])  # must sum to 1 or close
@@ -34,7 +35,7 @@ scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
 
 train_losses = []   # <--- store each step loss
 
-for epoch in range(100):
+for epoch in range(20):
     for seq, label in loader:
         seq = seq.to(device)
         label = label.to(device)
@@ -53,6 +54,8 @@ for epoch in range(100):
     scheduler.step(loss)
 
 
+
+###########   Visualization   ###########
 window = 50
 smoothed = np.convolve(train_losses, np.ones(window)/window, mode='valid')
 log_smoothed = np.log10(smoothed + 1e-8)
@@ -70,3 +73,32 @@ plt.grid(True)
 plt.savefig("training_loss_curve.png", dpi=300, bbox_inches="tight")
 
 plt.show()
+
+# -----------------------------
+# 4. Evaluate per-class accuracy
+# -----------------------------
+test_loader = DataLoader(dataset, batch_size=8, shuffle=False)
+correct_per_class = defaultdict(int)
+total_per_class = defaultdict(int)
+
+with torch.no_grad():
+    for seq, label in test_loader:
+        seq = seq.to(device)
+        label = label.to(device)
+
+        pred = model(seq)
+        predicted_class = pred.argmax(dim=1)
+
+        for l, p in zip(label, predicted_class):
+            total_per_class[l.item()] += 1
+            if l.item() == p.item():
+                correct_per_class[l.item()] += 1
+
+# -----------------------------
+# 5. Print per-class accuracy
+# -----------------------------
+for cls in range(3):
+    correct = correct_per_class.get(cls, 0)
+    total = total_per_class.get(cls, 0)
+    acc = 100 * correct / total if total > 0 else 0
+    print(f"Class {cls}: Accuracy {acc:.2f}% ({correct}/{total})")
