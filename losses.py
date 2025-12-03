@@ -23,7 +23,7 @@ class FocalLoss(nn.Module):
         loss = focal_term * ce_loss
 
         if self.alpha is not None:
-            alpha_t = self.alpha[targets]
+            alpha_t = self.alpha.to(targets.device)[targets]  # <-- GPU-safe
             loss = alpha_t * loss
 
         if self.reduction == "mean":

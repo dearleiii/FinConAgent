@@ -10,17 +10,20 @@ from dataloader import NpzDataset
 from losses import FocalLoss
 
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("Using device:", device)
+
 datafile_path = "stock_sequences.npz"
 dataset = NpzDataset(datafile_path, seq_len=30)
-loader = DataLoader(dataset, batch_size=16, shuffle=True)
+loader = DataLoader(dataset, batch_size=32, shuffle=True)
 
-model = LSTMClassifier()
-alpha = torch.tensor([0.1, 0.4, 0.5])  # must sum to 1 or close
+model = LSTMClassifier().to(device)
+alpha = torch.tensor([0.05, 0.45, 0.5])  # must sum to 1 or close
 
 # criterion = nn.CrossEntropyLoss()
 criterion = FocalLoss(alpha=alpha, gamma=2)
 
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-5)
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
     optimizer,
     mode='min',
@@ -31,8 +34,11 @@ scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
 
 train_losses = []   # <--- store each step loss
 
-for epoch in range(2000):
+for epoch in range(100):
     for seq, label in loader:
+        seq = seq.to(device)
+        label = label.to(device)
+
         optimizer.zero_grad()
         pred = model(seq)
         loss = criterion(pred, label)
