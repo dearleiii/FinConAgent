@@ -38,11 +38,13 @@ epoch_losses = []
 
 
 ### 3️⃣ Denoising AE Training Step (for sequential data) ###
-def train_autoencoder(model, X_input, X_target, device, epochs=5, lr=1e-3):
+def train_autoencoder(model, X_input, X_target, device, epochs=5, lr=1e-3, verbose=False):
     """
     Train autoencoder on sequential data
     X_input: [batch_size, seq_len, features] - will be reshaped to [batch_size, 1, seq_len, features]
     X_target: [batch_size, seq_len, features]
+    epochs: number of training epochs
+    verbose: whether to print loss per epoch
     """
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = nn.MSELoss()
@@ -57,7 +59,6 @@ def train_autoencoder(model, X_input, X_target, device, epochs=5, lr=1e-3):
     for epoch in range(epochs):
         optimizer.zero_grad()
         output = model(X_input_4d)
-        print(f"  Epoch {epoch+1}/{epochs} | Output shape: {output.shape}")
         
         # Pad target to match output shape if needed
         if output.shape != X_target_4d.shape:
@@ -71,6 +72,9 @@ def train_autoencoder(model, X_input, X_target, device, epochs=5, lr=1e-3):
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
+        
+        if verbose and epoch % max(1, epochs // 3) == 0:
+            print(f"    AE Epoch {epoch+1}/{epochs} | Loss: {loss.item():.6f}")
 
     # Return reconstructed output, squeezed back to [batch, seq_len, features]
     model.eval()
@@ -82,15 +86,22 @@ def train_autoencoder(model, X_input, X_target, device, epochs=5, lr=1e-3):
 
 
 ### Deep RPCA Alternating Optimization (for sequential data) ###
-def deep_rpca(X, model, lam, device, mu=0.1, iters=5, ae_epochs=1, verbose=True):
+def deep_rpca(X, model, lam, device, mu=0.1, iters=5, ae_epochs=20, verbose=True):
     """
     Deep RPCA for sequential data decomposition
     X: [batch_size, seq_len, features] normalized sequential data
-    model: ConvAutoencoder
-    lam: sparsity regularization parameter
-    ae_epochs: number of autoencoder training epochs per RPCA iteration
+    model: ConvAutoencoder (must be in train mode)
+    lam: sparsity regularization parameter (controls sparsity sensitivity)
+    ae_epochs: number of autoencoder training epochs per RPCA iteration (default=20)
+    iters: number of alternating optimization iterations
     verbose: whether to print convergence information
+    
     Returns: L_hat (low-rank/reconstructed), N (sparse/noise component)
+    
+    Tuning Guide:
+    - Increase ae_epochs (20-50) if reconstruction quality is still poor
+    - Increase iters (3-10) for better convergence
+    - Increase lam (0.1-1.0) to detect more anomalies
     """
     # Start with no noise
     N = torch.zeros_like(X)
@@ -103,15 +114,16 @@ def deep_rpca(X, model, lam, device, mu=0.1, iters=5, ae_epochs=1, verbose=True)
         # L_input is passed as both X_input and X_target because the autoencoder is being used
         #  as a self-supervised denoiser / low-rank projector,
         #  not as a predictor of a different target: “Given this data, learn to reconstruct only the structured (low-rank) part of it.”
-        L_hat = train_autoencoder(model, L_input, L_input, device, epochs=ae_epochs, lr=1e-4)
+        L_hat = train_autoencoder(model, L_input, L_input, device, epochs=ae_epochs, lr=1e-4, verbose=verbose)
 
         # Sparse update via soft-thresholding: Keeps only large residuals
         residual = X - L_hat
         N = soft_threshold(residual, lam)
 
         sparsity = (N != 0).sum().item() / N.numel()
+        mse_loss = torch.nn.functional.mse_loss(L_hat, X).item()
         if verbose:
-            print(f"  RPCA Iter {i} | Sparsity: {sparsity:.4f} | Nonzeros: {(N!=0).sum().item()}")
+            print(f"  RPCA Iter {i} | Sparsity: {sparsity:.4f} | MSE: {mse_loss:.6f} | Nonzeros: {(N!=0).sum().item()}")
 
     return L_hat, N
 
@@ -142,7 +154,7 @@ print(f"Input shape: {X_batch.shape}")  # Should be [batch_size, seq_len, featur
 
 # Reinitialize model for decomposition
 model_rpca = ConvAutoencoder(latent_dim=3, input_shape=(1, 25,8)).to(device)
-model_rpca.eval()  # Set to evaluation mode
+model_rpca.train()  # Set to training mode for RPCA iterations
 print("RPCA model initialized for testing.")
 
 # Test different lambda values
@@ -153,7 +165,7 @@ print("-" * 50)
 
 for lam in lamda_set:
     print(f"\nλ = {lam}")
-    L, S = deep_rpca(X_batch, model_rpca, lam, device=device, iters=3)
+    L, S = deep_rpca(X_batch, model_rpca, lam, device=device, iters=3, ae_epochs=20, verbose=False)
 
     # Calculate MSE on flattened tensors
     mse = F.mse_loss(L.reshape(L.size(0), -1), 
@@ -179,7 +191,8 @@ print("="*50)
 rpca_results = {}
 
 for lam in lamda_set:
-    L, S = deep_rpca(X_batch, model_rpca, lam, device=device, iters=3, ae_epochs=1, verbose=False)
+    print(f"Processing λ = {lam}...")
+    L, S = deep_rpca(X_batch, model_rpca, lam, device=device, iters=3, ae_epochs=20, verbose=False)
     rpca_results[lam] = {
         'L': L.cpu().numpy(),
         'S': S.cpu().numpy(),
@@ -206,30 +219,47 @@ for row, lam in enumerate(lamda_set):
     L_sample = rpca_results[lam]['L'][sample_idx]
     S_sample = rpca_results[lam]['S'][sample_idx]
     
-    # Plot 1: Original Signal
+    # Plot 1: Original Signal (normalize per-feature for better visualization)
     ax = axes[row, 0]
-    im = ax.imshow(X_sample.T, aspect='auto', cmap='RdYlBu_r', interpolation='nearest')
+    X_normalized_viz = X_sample.copy()
+    for feat_idx in range(X_sample.shape[1]):
+        feat_min = X_sample[:, feat_idx].min()
+        feat_max = X_sample[:, feat_idx].max()
+        if feat_max > feat_min:
+            X_normalized_viz[:, feat_idx] = (X_sample[:, feat_idx] - feat_min) / (feat_max - feat_min)
+    im = ax.imshow(X_normalized_viz.T, aspect='auto', cmap='RdYlBu_r', interpolation='nearest', vmin=0, vmax=1)
     ax.set_xlabel('Time Step')
     ax.set_ylabel('Feature')
     ax.set_yticks(range(len(feature_names)))
     ax.set_yticklabels(feature_names, fontsize=8)
-    ax.set_title(f'λ={lam:.2f} | Original Signal', fontweight='bold')
-    plt.colorbar(im, ax=ax, label='Value')
+    ax.set_title(f'λ={lam:.2f} | Original Signal (per-feature normalized)', fontweight='bold')
+    plt.colorbar(im, ax=ax, label='Normalized [0-1]')
     
-    # Plot 2: Reconstructed Signal (Low-rank)
+    # Plot 2: Reconstructed Signal (normalize per-feature)
     ax = axes[row, 1]
-    im = ax.imshow(L_sample.T, aspect='auto', cmap='RdYlBu_r', interpolation='nearest')
+    L_normalized_viz = L_sample.copy()
+    for feat_idx in range(L_sample.shape[1]):
+        feat_min = L_sample[:, feat_idx].min()
+        feat_max = L_sample[:, feat_idx].max()
+        if feat_max > feat_min:
+            L_normalized_viz[:, feat_idx] = (L_sample[:, feat_idx] - feat_min) / (feat_max - feat_min)
+    im = ax.imshow(L_normalized_viz.T, aspect='auto', cmap='RdYlBu_r', interpolation='nearest', vmin=0, vmax=1)
     ax.set_xlabel('Time Step')
     ax.set_ylabel('Feature')
     ax.set_yticks(range(len(feature_names)))
     ax.set_yticklabels(feature_names, fontsize=8)
-    ax.set_title(f'λ={lam:.2f} | Reconstructed L', fontweight='bold')
-    plt.colorbar(im, ax=ax, label='Value')
+    ax.set_title(f'λ={lam:.2f} | Reconstructed L (per-feature normalized)', fontweight='bold')
+    plt.colorbar(im, ax=ax, label='Normalized [0-1]')
     
-    # Plot 3: Sparse Component (Anomalies)
+    # Plot 3: Sparse Component (Anomalies) - use absolute value for better visibility
     ax = axes[row, 2]
     S_abs = np.abs(S_sample)
-    im = ax.imshow(S_abs.T, aspect='auto', cmap='hot', interpolation='nearest')
+    S_normalized_viz = S_abs.copy()
+    for feat_idx in range(S_abs.shape[1]):
+        feat_max = S_abs[:, feat_idx].max()
+        if feat_max > 0:
+            S_normalized_viz[:, feat_idx] = S_abs[:, feat_idx] / feat_max
+    im = ax.imshow(S_normalized_viz.T, aspect='auto', cmap='hot', interpolation='nearest', vmin=0, vmax=1)
     ax.set_xlabel('Time Step')
     ax.set_ylabel('Feature')
     ax.set_yticks(range(len(feature_names)))
