@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Data files (large)
+*.npz
+*.csv
+*.mat
+data/
+processed_stock_data.csv
+stock_sequences.npz
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# PyTorch/ML
+*.pth
+*.pt
+*.ckpt
+
+# Visualization outputs (optional - remove if you want to track them)
+visualization/*.png

@@ -37,7 +37,7 @@ criterion = torch.nn.MSELoss()
 X_input_4d = X_batch.unsqueeze(1)
 X_target_4d = X_batch.unsqueeze(1)
 
-for epoch in range(20):
+for epoch in range(1000):
     optimizer.zero_grad()
     output = model(X_input_4d)
     

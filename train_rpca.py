@@ -27,14 +27,6 @@ model = ConvAutoencoder(latent_dim=3, input_shape=(1, 25,8)).to(device)
 data = np.load(datafile_path)
 y_data = data['y']
 unique, counts = np.unique(data, return_counts=True)
-# class_weights = 1.0 / counts  # Inverse frequency weighting
-# class_weights = class_weights / class_weights.sum()  # Normalize
-# alpha = torch.tensor(class_weights, dtype=torch.float32)
-
-# print(f"Class weights: {alpha}")
-
-train_losses = []   # <--- store each step loss
-epoch_losses = []
 
 
 ### 3️⃣ Denoising AE Training Step (for sequential data) ###
@@ -86,20 +78,20 @@ def train_autoencoder(model, X_input, X_target, device, epochs=5, lr=1e-3, verbo
 
 
 ### Deep RPCA Alternating Optimization (for sequential data) ###
-def deep_rpca(X, model, lam, device, mu=0.1, iters=5, ae_epochs=20, verbose=True):
+def deep_rpca(X, model, lam, device, mu=0.1, iters=5, ae_epochs=1000, verbose=True):
     """
     Deep RPCA for sequential data decomposition
     X: [batch_size, seq_len, features] normalized sequential data
     model: ConvAutoencoder (must be in train mode)
     lam: sparsity regularization parameter (controls sparsity sensitivity)
-    ae_epochs: number of autoencoder training epochs per RPCA iteration (default=20)
+    ae_epochs: number of autoencoder training epochs per RPCA iteration (default=1000)
     iters: number of alternating optimization iterations
     verbose: whether to print convergence information
     
     Returns: L_hat (low-rank/reconstructed), N (sparse/noise component)
     
     Tuning Guide:
-    - Increase ae_epochs (20-50) if reconstruction quality is still poor
+    - Increase ae_epochs (1000-5000) for better reconstruction quality
     - Increase iters (3-10) for better convergence
     - Increase lam (0.1-1.0) to detect more anomalies
     """
@@ -165,7 +157,7 @@ print("-" * 50)
 
 for lam in lamda_set:
     print(f"\nλ = {lam}")
-    L, S = deep_rpca(X_batch, model_rpca, lam, device=device, iters=3, ae_epochs=20, verbose=False)
+    L, S = deep_rpca(X_batch, model_rpca, lam, device=device, iters=3, ae_epochs=1000, verbose=False)
 
     # Calculate MSE on flattened tensors
     mse = F.mse_loss(L.reshape(L.size(0), -1), 
@@ -192,7 +184,7 @@ rpca_results = {}
 
 for lam in lamda_set:
     print(f"Processing λ = {lam}...")
-    L, S = deep_rpca(X_batch, model_rpca, lam, device=device, iters=3, ae_epochs=20, verbose=False)
+    L, S = deep_rpca(X_batch, model_rpca, lam, device=device, iters=3, ae_epochs=1000, verbose=False)
     rpca_results[lam] = {
         'L': L.cpu().numpy(),
         'S': S.cpu().numpy(),
