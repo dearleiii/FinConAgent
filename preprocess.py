@@ -14,7 +14,7 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 FEATURE_COLS = ['open', 'high', 'low', 'close', 'volume',
                 'MA10', 'MA20', 'vwap']
 START_TIME = pd.to_timedelta("09:31:00")  # starting timestamp each day
-SEQ_LEN = 30
+SEQ_LEN = 25
 
 
 # ==========================================
@@ -94,6 +94,7 @@ def create_lstm_sequences(df, feature_cols=FEATURE_COLS):
     
     # Group by day
     for day, day_df in df.groupby(df['timestamp'].dt.date):
+        # day_df contains only rows from that day
         print("day/ day_df: ", day)
         day_df = day_df.sort_values('timestamp')
         print("start processing day_df: ", day_df)
@@ -118,10 +119,6 @@ def create_lstm_sequences(df, feature_cols=FEATURE_COLS):
 
             X.append(seq)
             y.append(labels[i])
-
-            # print(X, np.array(X).shape)
-            # print("\n\n labels: ", y)
-            # exit()
 
     return np.array(X), np.array(y)
 
@@ -177,10 +174,106 @@ print(label_counts)
 print("\n📈 Label Percentages (%):")
 print(label_percent.round(2))
 
+# ==========================================
+# STEP 3: Balance Labels (Increase Minor, Downsample Major)
+# ==========================================
+
+# Identify min and max label counts
+# min_count = label_counts.min()
+# max_count = label_counts.max()
+
+# print(f"\n\n🔄 Balancing Labels:")
+# print(f"Min count: {min_count}, Max count: {max_count}")
+
+# # Separate data by label
+# label_groups = []
+# for label_id in label_counts.index:
+#     label_groups.append(merged_df[merged_df['label_id'] == label_id])
+
+# # Balance the dataset
+# balanced_dfs = []
+# for label_id, group in zip(label_counts.index, label_groups):
+#     # Iterates over each label and its corresponding subset of the DataFrame.
+#     # Counts how many rows this label has.
+#     count = len(group)
+    
+#     if count < max_count:
+#         # Increase minor labels (upsample with replacement)
+#         # If the label has fewer than max_count samples
+#         # The entire group is kept unchanged
+#         balanced_dfs.append(group)
+#     else:
+#         # Downsample major labels (sample 1/10 of the data)
+#         downsample_size = max(min_count, count // 10)
+#         # Randomly samples rows without replacement
+#         # random_state=42 ensures reproducibility
+#         sampled_group = group.sample(n=downsample_size, random_state=42)
+#         balanced_dfs.append(sampled_group)
+#         print(f"Label {label_id}: downsampled from {count} to {downsample_size}")
+
+# # Concatenate balanced dataframes
+# merged_df = pd.concat(balanced_dfs, ignore_index=True).sample(frac=1, random_state=42)
+
+# # Check new label distribution
+# new_label_counts = merged_df['label_id'].value_counts()
+# new_label_percent = merged_df['label_id'].value_counts(normalize=True) * 100
+
+# print(f"\n✅ Balanced Label Counts:")
+# print(new_label_counts)
+# print(f"\n✅ Balanced Label Percentages (%):")
+# print(new_label_percent.round(2))
+
 # Sving 
 merged_df.to_csv("processed_stock_data.csv", index=False)
 
-
 print("\n\n Creating sequences ...... ")
 X, y = create_lstm_sequences(merged_df)
-np.savez("stock_sequences.npz", X=X, y=y)
+
+# ==========================================
+# STEP 4: Balance Sequences (Increase Minor, Downsample Major)
+# ==========================================
+
+print(f"\n\n📊 Initial Sequence Label Distribution:")
+unique, counts = np.unique(y, return_counts=True)
+for label, count in zip(unique, counts):
+    print(f"Label {int(label)}: {count}")
+
+# Find min and max counts
+min_count = counts.min()
+max_count = counts.max()
+
+print(f"\n🔄 Balancing Sequences:")
+print(f"Min count: {min_count}, Max count: {max_count}")
+
+# Separate indices by label
+balanced_indices = []
+for label_id in unique:
+    label_indices = np.where(y == label_id)[0]
+    count = len(label_indices)
+    
+    if count < max_count:
+        # Keep minor labels unchanged
+        balanced_indices.extend(label_indices)
+        print(f"Label {int(label_id)}: keeping all {count} samples")
+    else:
+        # Downsample major labels (sample 1/10 of the data)
+        downsample_size = max(min_count, count // 10)
+        sampled_indices = np.random.choice(label_indices, size=downsample_size, replace=False)
+        balanced_indices.extend(sampled_indices)
+        print(f"Label {int(label_id)}: downsampled from {count} to {downsample_size}")
+
+# Shuffle the balanced indices
+balanced_indices = np.array(balanced_indices)
+np.random.shuffle(balanced_indices)
+
+# Apply balanced indices to X and y
+X_balanced = X[balanced_indices]
+y_balanced = y[balanced_indices]
+
+# Check new distribution
+print(f"\n✅ Balanced Sequence Label Distribution:")
+unique_balanced, counts_balanced = np.unique(y_balanced, return_counts=True)
+for label, count in zip(unique_balanced, counts_balanced):
+    print(f"Label {int(label)}: {count}")
+
+np.savez("stock_sequences.npz", X=X_balanced, y=y_balanced)

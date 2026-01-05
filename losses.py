@@ -18,6 +18,7 @@ class FocalLoss(nn.Module):
         ce_loss = self.ce(logits, targets)  # normal CE loss per sample
 
         pt = torch.exp(-ce_loss)            # probability of correct class
+        pt = torch.clamp(pt, min=1e-7, max=1.0)  # Avoid numerical instability
         focal_term = (1 - pt) ** self.gamma
 
         loss = focal_term * ce_loss
@@ -25,6 +26,9 @@ class FocalLoss(nn.Module):
         if self.alpha is not None:
             alpha_t = self.alpha.to(targets.device)[targets]  # <-- GPU-safe
             loss = alpha_t * loss
+
+        # Ensure loss is non-negative
+        loss = torch.clamp(loss, min=0.0)
 
         if self.reduction == "mean":
             return loss.mean()
