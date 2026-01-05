@@ -4,7 +4,7 @@ from torch.utils.data import Dataset
 
 
 class NpzDataset(Dataset):
-    def __init__(self, npz_path, seq_len=30):
+    def __init__(self, npz_path):
         data = np.load(npz_path)
         print("LOADED DATA: ", data)
         # self.X = df[['open','high','low','close','volume']].values
